@@ -93,6 +93,8 @@ def generate(params, data,
         s0     = data.S0
         i0     = data.I0
         r0     = data.R0
+        transition = [(1, 0), # infection
+                      (0, 1)] # removal 
         
     elif data.model == 'SEIR':
         
@@ -106,83 +108,89 @@ def generate(params, data,
         i0     = data.I0
         r0     = data.R0
     
-    T      = data.T
     tmin   = data.tmin
     tmax   = data.tmax
     
-    # initialize lists
-    s  = [s0]
-    i  = [i0]
-    r  = [r0]
-    
-    st = s0
-    it = i0
-    rt = r0
-    
-    # get first observation reporting time beyond tmin.
-    j  = 1
-    Treport = T[j]
-    events  = np.array([1, 2])
-    
     # start time
     t  = tmin
+
+    # starting state
+    s = s0
+    i = i0
+    r = r0
+
+    # initialize list of states
+    states = [[t, s, i, r]]
+
     ii = 0
     while (t < tmax) and (ii < maxiter):
         ii += 1
     
         # generate time to next event
-        p1   = beta * it * st
-        p2   = alpha* it
+        p1   = beta * i * s
+        p2   = alpha * i
         psum = p1 + p2
-        if psum <= 0: break
 
-        t += np.random.exponential(1.0/psum)
-
-        # Choose event
-        pr = np.array([p1, p2]) / psum
-        k  = np.random.choice(events, p=pr)
-        
-        i_new = 0
-        r_new = 0  
-        if k == 1:
-            i_new = 1  # an infection event
+        if psum > 0:
+            t += np.random.exponential(1.0/psum)
         else:
-            r_new = 1  # a recovery or removal event
-
-        # save current state before update
-        st_prev = st
-        it_prev = it
-        rt_prev = rt
-        
-        # update state
-        st = st - i_new
-        it = it + i_new - r_new
-        rt = rt + r_new
-        
-        # if time exceeds next observation reporting time, 
-        # return data of previous state
-        if t > Treport:
-            s.append(st_prev)
-            i.append(it_prev)
-            r.append(rt_prev)
-            
-            # get next reporting time
-            j += 1
-            if j < len(T):
-                Treport = T[j]
-            else:
-                break
-            
-        # if time exceeds last reporting time, we're done!
-        if t > T[-1]: 
+            # since i = 0, the epidemic has ended, so make end state the
+            # same as last state.
+            t = 1.01 * tmax
+            state = states[-1][1:] # skip time stamp
+            state.insert(0, t)     # insert time at position 0
+            states.append(state)
             break
-     
-    # convert python lists to numpy arrays
-    s = np.array(s)
-    i = np.array(i)
-    r = np.array(r)
+            
+        # choose event
+        k  = np.random.choice([0, 1], p=[p1/psum, p2/psum])
+        i_new, r_new = transition[k]
+        
+        # update state (defined by counts s, i, and r)
+        s = s - i_new
+        i = i + i_new - r_new
+        r = r + r_new
+
+        # the counts should never be negative
+        assert(s >= 0)
+        assert(i >= 0)
+        assert(r >= 0)
+        
+        states.append([t, s, i, r])
     
-    return s, i, r
+    return states
+
+def observe(T, states):
+
+    # implement a braided loop: one strand is over the epidemic events 
+    # and another strand is over the observation times.
+
+    results = []
+    j = 0
+    # loop over all states except the last
+    for i, state in enumerate(states[:-1]):
+
+        t = state[0]
+        
+        # loop over all observation times
+        while j < len(T):
+
+            # if t <= T[j] < t_next then
+            #    i)  the state at time t is the same as that observed at time T[j].
+            #    ii) therefore, move to the next observation time T[j] => T[j+1]
+            # otherwise keep the same observation time, but go to the next epidemic state 
+            if T[j] >= t:
+                t_next = states[i+1][0]
+                if T[j] < t_next:
+                    results.append(state[1:])
+                    j += 1
+                else:
+                    break # the observation time T[j] does not lie in the interval [t, t_next)
+            else:
+                break # the observation time T[j] does not lie in the interval [t, t_next)
+
+    assert(len(results) == len(T))
+    return results
 
 def Fsolve(alpha, beta, data=SIRdata):
     '''
