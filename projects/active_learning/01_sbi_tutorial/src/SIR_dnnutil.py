@@ -49,14 +49,12 @@ def split_source_target(df, source, target):
 
 # return a batch of data for the next step in minimization
 def get_batch(x, t, batch_size):
-    # the numpy function choice(length, number)
     # selects at random "batch_size" integers from 
-    # the range [0, length-1] corresponding to the
-    # row indices.
-    rows    = np.random.choice(len(x), batch_size)
-    batch_x = x[rows]
-    batch_t = t[rows]
-    return (batch_x, batch_t)
+    # the range [0, batch_size-1] with replacement
+    # corresponding to the row indices of the training 
+    # data to be used
+    rows = torch.randint(0, len(x)-1, size=(batch_size,))
+    return x[rows], t[rows]
 
 # Note: there are several average loss functions available 
 # in pytorch, but it's useful to know how to create your own.
@@ -81,58 +79,11 @@ def validate(model, avloss, inputs, targets):
     # make sure we set evaluation mode so that any training specific
     # operations are disabled.
     model.eval() # evaluation mode
-    
-    with torch.no_grad(): # no need to compute gradients wrt. x and t
-        x = torch.from_numpy(inputs).float().to(device)
-        t = torch.from_numpy(targets).float().to(device)
+
+    with torch.no_grad(): # no need to compute gradients wrt. x and 
         # remember to reshape!
-        o = model(x).reshape(t.shape)
-    return avloss(o, t, x)
-
-# A simple wrapper around a model to make using the latter more
-# convenient
-class ModelHandler:
-    def __init__(self, model):
-        self.model = model
-
-    def __call__(self, x, y, *args):
-        
-        # convert numpy ndarray to a pytorch tensor
-        # list(zip(x,y)) converts two arrays into one with two
-        # columns.
-        
-        if len(args) == 0:
-            try:
-                inp = list(zip(x, y))
-            except:
-                inp = list([x, y])
-        else:
-            a = args[0]
-            type_a = type(a)
-            if type_a in [type(1), type(1.0)]:
-                inp = list(zip(x, y, [a]*len(x)))
-                
-            elif type_a == type([]):
-                n = len(a)
-                if n < len(x):
-                    a = a * int(len(x) / n)
-                    n = len(a)
-                inp = list(zip(x[:n], y[:n], a))
-                
-            else:
-                inp = list(zip(x, y, a))
-
-        XY = torch.Tensor(inp)
-    
-        # go to evaluation mode
-        self.model.eval()
-    
-        # compute,reshape to a 1d array, and convert to a numpy array
-        Y  = self.model(XY).view(-1,).detach().numpy()
-        if len(Y) == 1:
-            return Y[0]
-        else:
-            return Y
+        outputs = model(inputs).reshape(targets.shape)
+    return avloss(outputs, targets, inputs)
         
 def number_of_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -152,6 +103,19 @@ def train(model, optimizer, dictfile, early_stopping_count,
     
     valid_x, valid_t = split_source_target(valid_data, 
                                            features, target)
+
+    train_x, train_t = split_source_target(train_data, features, target)
+    
+    valid_x, valid_t = split_source_target(valid_data, features, target)
+
+    # load data onto computational device
+    with torch.no_grad(): # no need to compute gradients wrt. x and t
+        train_x = torch.from_numpy(train_x).float().to(device)
+        train_t = torch.from_numpy(train_t).float().to(device)
+    
+        valid_x = torch.from_numpy(valid_x).float().to(device)
+        valid_t = torch.from_numpy(valid_t).float().to(device)
+    
     
     # to keep track of average losses
     xx, yy_t, yy_v = traces
@@ -182,18 +146,8 @@ def train(model, optimizer, dictfile, early_stopping_count,
         model.train()
         
         # get a random sample (a batch) of data (as numpy arrays)
-        batch_x, batch_t = getbatch(train_x, train_t, batch_size)
+        x, t = getbatch(train_x, train_t, batch_size)
         
-        # convert the numpy arrays batch_x and batch_t to tensor 
-        # types. The PyTorch tensor type is the magic that permits 
-        # automatic differentiation with respect to parameters. 
-        # However, since we do not need to take the derivatives
-        # with respect to x and t, we disable this feature
-        with torch.no_grad(): # no need to compute gradients 
-            # wrt. x and t
-            x = torch.from_numpy(batch_x).float().to(device)
-            t = torch.from_numpy(batch_t).float().to(device)
- 
         # compute the output of the model for the batch of data x
         # Note: outputs is 
         #   of shape (-1, 1), but the tensor targets, t, is
@@ -248,8 +202,6 @@ def train(model, optimizer, dictfile, early_stopping_count,
             yy_v.append(acc_v)
                 
     print()
-    
-    model.load_state_dict(torch.load(dictfile))
     return (xx, yy_t, yy_v)
 
 def plot_average_loss(traces, ftsize=18):

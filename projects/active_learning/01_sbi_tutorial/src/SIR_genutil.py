@@ -192,6 +192,31 @@ def observe(T, states):
     assert(len(results) == len(T))
     return results
 
+def compute_means(alpha, beta, size=400, frac=0.25, meta_data=SIRdata):
+    '''
+
+    Compute mean counts S(t), I(t), R(t)
+
+    Inputs:
+       alpha, beta:    parameter points (floats)
+       size:           number of epidemics to simulate
+       frac:           fraction of day at which to observe epidemic,
+                       therefore, number of observation points = int((tmax-time)/frac) + 1
+       meta_data:      data in SIRdata
+
+    Returns:
+       t, [S, I, R]    observation times, and [S, I, R] as a numpy array of shape (size, 3)
+    '''
+    
+    params = (alpha, beta)
+    tmin, tmax = SIRdata.tmin, meta_data.tmax
+    t = np.linspace(tmin, tmax, int((tmax-tmin)/frac)+1)
+    means  = []
+    for _ in range(size):
+        states = generate(params, meta_data)
+        means.append( observe(t, states) )
+    return t, np.array(means).mean(axis=0)
+        
 def Fsolve(alpha, beta, data=SIRdata):
     '''
     Solve SIR model ODEs for given parameter point (alpha, beta).
